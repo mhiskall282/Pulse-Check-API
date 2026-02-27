@@ -147,9 +147,11 @@ async def create_monitor(monitor: MonitorCreate):
         "id": monitor.id,
         "timeout": monitor.timeout,
         "alert_email": monitor.alert_email,
-        "status": "active",            # active | down | paused
+        "status": "active",
         "created_at": datetime.utcnow().isoformat(),
-        "last_heartbeat": None         # no heartbeat received yet
+        "last_heartbeat": None,
+        "heartbeat_history": []  # ← empty list, grows with each heartbeat
+        # In production this would be a database table with foreign key to device
     }
 
     # Start the background countdown and save the task reference
@@ -211,9 +213,19 @@ async def heartbeat(device_id: str):
     )
     active_tasks[device_id] = new_task
 
-    # Record when this heartbeat arrived
-    monitors_db[device_id]["last_heartbeat"] = datetime.utcnow().isoformat()
+    # Record the timestamp of this heartbeat
+    now = datetime.utcnow().isoformat()
+    monitors_db[device_id]["last_heartbeat"] = now
     monitors_db[device_id]["status"] = "active"
+
+    # Append to history log
+    # Each entry records the time and what happened
+    monitors_db[device_id]["heartbeat_history"].append({
+        "received_at": now,
+        "event": "heartbeat",
+        "timer_reset_to": monitor["timeout"]
+        # This tells you exactly when device was alive and what timer was reset to
+    })
 
     return {
         "message": f"Heartbeat received. Timer reset for '{device_id}'",
@@ -269,6 +281,47 @@ async def pause_monitor(device_id: str):
         "status": "paused"
     }
 
+
+# ─────────────────────────────────────────────────────────────────
+# ROUTE 7: GET /monitors/{id}/history — Heartbeat history log
+# DEVELOPER'S CHOICE feature
+# Shows every heartbeat a device ever sent
+# Critical for auditing and debugging in real infrastructure systems
+# ─────────────────────────────────────────────────────────────────
+
+@app.get("/monitors/{device_id}/history")
+def get_monitor_history(device_id: str):
+    """
+    Returns the full heartbeat history for a device.
+
+    Why this matters:
+    - Tells you HOW OFTEN a device is checking in
+    - Helps identify devices that are barely alive (pinging less frequently)
+    - Gives engineers an audit trail before and after an incident
+    - In production: would be stored in a time-series database like InfluxDB
+    """
+
+    if device_id not in monitors_db:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Monitor '{device_id}' not found"
+        )
+
+    monitor = monitors_db[device_id]
+    history = monitor["heartbeat_history"]
+
+    return {
+        "device_id": device_id,
+        "status": monitor["status"],
+        "total_heartbeats": len(history),
+        # total_heartbeats tells you at a glance how active this device was
+        "first_heartbeat": history[0]["received_at"] if history else None,
+        # first_heartbeat → when did this device first check in?
+        "last_heartbeat": monitor["last_heartbeat"],
+        # last_heartbeat → when did it last check in?
+        "history": history
+        # full log of every single ping
+    }
 # ─────────────────────────────────────────────────────────────────
 # ROUTE 5: GET /monitors/{id} — Get a single monitor's status
 # Bonus route — shows initiative, great for interview demo

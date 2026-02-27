@@ -141,6 +141,11 @@ Open your browser and go to:
 http://localhost:8000
 ```
 
+## 🌐 Live Demo
+Base URL: `https://pulse-check-api-9fa8.onrender.com`
+
+Interactive Docs: ```https://pulse-check-api-9fa8.onrender.com/docs```
+
 ---
 
 ### 1. Register a Monitor

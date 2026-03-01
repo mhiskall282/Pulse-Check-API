@@ -19,6 +19,28 @@ import asyncio
 from datetime import datetime
 # datetime → for timestamps when alerts fire
 
+import logging
+# logging → Python's built-in logging system
+# More professional than plain print() — used in every real backend system
+# Levels: DEBUG → INFO → WARNING → ERROR → CRITICAL
+# We use CRITICAL for device down alerts so they stand out in logs
+
+# ─────────────────────────────────────────────────────────────────
+# LOGGING SETUP
+# basicConfig sets the format for every log message in this app
+# asctime = timestamp, levelname = INFO/CRITICAL etc, message = our text
+# In production: logs would go to a file or monitoring service like Datadog
+# ─────────────────────────────────────────────────────────────────
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s — %(levelname)s — %(message)s"
+)
+
+# Create a logger for this specific module (main.py)
+# Best practice: each file has its own named logger
+logger = logging.getLogger(__name__)
+
 # ─────────────────────────────────────────────────────────────────
 # APP SETUP
 # ─────────────────────────────────────────────────────────────────
@@ -34,6 +56,7 @@ app = FastAPI(
 # A plain Python dictionary — works like a table in RAM
 # Key = device id (string), Value = monitor info (dict)
 # Resets on server restart — fine for this project
+# In production: would use PostgreSQL or Redis for persistence
 # ─────────────────────────────────────────────────────────────────
 
 monitors_db = {}
@@ -61,8 +84,37 @@ class MonitorCreate(BaseModel):
     alert_email: str  # who to notify when device goes down
 
 # ─────────────────────────────────────────────────────────────────
+# SIMULATED EMAIL FUNCTION
+# In production this would use SendGrid, AWS SES, or smtplib
+# For this project we simulate it with structured log messages
+# This satisfies the spec requirement to "simulate sending an email"
+# ─────────────────────────────────────────────────────────────────
+
+def simulate_email_alert(device_id: str, alert_email: str, timestamp: str):
+    """
+    Simulates sending an email alert to the device administrator.
+
+    In a real system this function would:
+    - Connect to an SMTP server or email API (e.g. SendGrid)
+    - Compose an HTML email with device details
+    - Send it to the alert_email address
+    - Log success or failure of the send
+
+    For this project we log what the email would contain.
+    """
+    logger.info("=" * 55)
+    logger.info("📧 SIMULATING EMAIL ALERT")
+    logger.info(f"   To:      {alert_email}")
+    logger.info(f"   Subject: CRITICAL — Device {device_id} is offline")
+    logger.info(f"   Body:    Your device '{device_id}' has not sent a")
+    logger.info(f"            heartbeat since {timestamp}.")
+    logger.info(f"            Immediate action required.")
+    logger.info(f"   Footer:  Sent by Pulse Check API — CritMon Systems")
+    logger.info("=" * 55)
+
+# ─────────────────────────────────────────────────────────────────
 # BACKGROUND TIMER FUNCTION
-# runs silently while your API keeps working
+# Runs silently while your API keeps working
 # asyncio.sleep() pauses THIS function only — not the whole server
 # ─────────────────────────────────────────────────────────────────
 
@@ -77,8 +129,9 @@ async def start_countdown(device_id: str, timeout: int):
         await asyncio.sleep(timeout)
 
     except asyncio.CancelledError:
-        # This runs when heartbeat cancels the task
-        # We just return silently — no alert needed
+        # This runs when a heartbeat cancels the task
+        # We return silently — cancellation is normal and expected
+        # No alert should fire when a device is actively sending heartbeats
         return
 
     # After sleeping, check the monitor still exists
@@ -91,27 +144,36 @@ async def start_countdown(device_id: str, timeout: int):
     # (not paused, not already down)
     if monitor["status"] == "active":
 
-        # Update status to "down"
+        # Update status to "down" in our database
         monitors_db[device_id]["status"] = "down"
 
-        # Build the alert — in production this sends an email/webhook
+        # Get the current timestamp for the alert
+        timestamp = datetime.utcnow().isoformat()
+
+        # Build the alert payload — exact format the spec requires
         alert = {
             "ALERT": f"Device {device_id} is DOWN! No heartbeat received.",
-            "time": datetime.utcnow().isoformat(),
+            "time": timestamp,
             "alert_email": monitor["alert_email"]
         }
 
-        # Print to console (spec requirement)
-        print("\n🚨 " + "="*50)
-        print(alert)
-        print("="*50 + "\n")
+        # Log as CRITICAL — the highest severity level
+        # This is the console.log equivalent the spec asks for
+        logger.critical("🚨 " + "=" * 50)
+        logger.critical(f"DEVICE DOWN ALERT: {alert}")
+        logger.critical("=" * 50)
+
+        # Simulate sending the email notification
+        simulate_email_alert(device_id, monitor["alert_email"], timestamp)
 
 # ─────────────────────────────────────────────────────────────────
 # ROUTE 1: GET / — Health check
+# Simple endpoint to confirm the API is running
 # ─────────────────────────────────────────────────────────────────
 
 @app.get("/")
 def root():
+    logger.info("Health check endpoint hit")
     return {
         "message": "Pulse Check API is running",
         "version": "1.0.0",
@@ -126,16 +188,21 @@ def root():
 async def create_monitor(monitor: MonitorCreate):
     """
     Registers a new device and starts its countdown timer.
+
+    - Validates the input using Pydantic
+    - Stores monitor in memory
+    - Starts a background countdown timer
+    - Returns 201 Created
     """
 
-    # Reject duplicate device IDs
+    # Reject duplicate device IDs — each device needs a unique ID
     if monitor.id in monitors_db:
         raise HTTPException(
             status_code=400,
             detail=f"Monitor '{monitor.id}' already exists"
         )
 
-    # Timeout must be a positive number
+    # Timeout must be a positive number — 0 or negative makes no sense
     if monitor.timeout <= 0:
         raise HTTPException(
             status_code=400,
@@ -147,19 +214,22 @@ async def create_monitor(monitor: MonitorCreate):
         "id": monitor.id,
         "timeout": monitor.timeout,
         "alert_email": monitor.alert_email,
-        "status": "active",
+        "status": "active",            # active | down | paused
         "created_at": datetime.utcnow().isoformat(),
-        "last_heartbeat": None,
-        "heartbeat_history": []  # ← empty list, grows with each heartbeat
-        # In production this would be a database table with foreign key to device
+        "last_heartbeat": None,        # no heartbeat received yet
+        "heartbeat_history": []        # grows with every heartbeat received
+        # In production: heartbeat_history would be a separate DB table
     }
 
     # Start the background countdown and save the task reference
-    # so we can cancel it later when a heartbeat arrives
+    # asyncio.create_task() runs it concurrently without blocking this response
+    # We save the reference so we can cancel it when a heartbeat arrives
     task = asyncio.create_task(
         start_countdown(monitor.id, monitor.timeout)
     )
     active_tasks[monitor.id] = task
+
+    logger.info(f"✅ Monitor created for device '{monitor.id}' | timeout: {monitor.timeout}s")
 
     # Send confirmation back to client
     return {
@@ -179,10 +249,14 @@ async def create_monitor(monitor: MonitorCreate):
 async def heartbeat(device_id: str):
     """
     Resets the countdown timer for a device.
-    Cancels the old timer and starts a fresh one.
+
+    - Cancels the currently running timer
+    - Starts a fresh timer from the full timeout duration
+    - Records the heartbeat in history log
+    - Returns 200 OK
     """
 
-    # Device must exist
+    # Device must exist in our database
     if device_id not in monitors_db:
         raise HTTPException(
             status_code=404,
@@ -191,23 +265,29 @@ async def heartbeat(device_id: str):
 
     monitor = monitors_db[device_id]
 
-    # If monitor is already down, can't reset it
+    # A down device cannot send heartbeats
+    # It must be re-registered as a new monitor
     if monitor["status"] == "down":
         raise HTTPException(
             status_code=400,
-            detail=f"Monitor '{device_id}' is already down. Create a new one."
+            detail=f"Monitor '{device_id}' is already down. Create a new monitor."
         )
 
-    # If monitor was paused, heartbeat un-pauses it
+    # If monitor was paused, heartbeat automatically un-pauses it
+    # This matches the spec: "Calling the heartbeat endpoint again
+    # automatically un-pauses the monitor and restarts the timer"
     if monitor["status"] == "paused":
         monitors_db[device_id]["status"] = "active"
+        logger.info(f"▶️  Monitor '{device_id}' resumed via heartbeat")
 
-    # Cancel the currently running timer
+    # Cancel the currently running background timer
+    # .cancel() sends a CancelledError to the coroutine
+    # Our try/except in start_countdown catches it and returns silently
     if device_id in active_tasks:
         old_task = active_tasks[device_id]
-        old_task.cancel()  # sends cancellation — our try/except catches it
+        old_task.cancel()
 
-    # Start a brand new countdown from the full timeout
+    # Start a brand new countdown from the full timeout duration
     new_task = asyncio.create_task(
         start_countdown(device_id, monitor["timeout"])
     )
@@ -218,14 +298,14 @@ async def heartbeat(device_id: str):
     monitors_db[device_id]["last_heartbeat"] = now
     monitors_db[device_id]["status"] = "active"
 
-    # Append to history log
-    # Each entry records the time and what happened
+    # Append this heartbeat to the history log (Developer's Choice feature)
     monitors_db[device_id]["heartbeat_history"].append({
         "received_at": now,
         "event": "heartbeat",
         "timer_reset_to": monitor["timeout"]
-        # This tells you exactly when device was alive and what timer was reset to
     })
+
+    logger.info(f"💓 Heartbeat received for '{device_id}' | timer reset to {monitor['timeout']}s")
 
     return {
         "message": f"Heartbeat received. Timer reset for '{device_id}'",
@@ -237,15 +317,18 @@ async def heartbeat(device_id: str):
 
 # ─────────────────────────────────────────────────────────────────
 # ROUTE 4: POST /monitors/{id}/pause — Pause the countdown
-# Bonus story from the spec
+# Bonus story from the spec — the "Snooze Button"
+# Use case: maintenance technician repairing a device
 # ─────────────────────────────────────────────────────────────────
 
 @app.post("/monitors/{device_id}/pause")
 async def pause_monitor(device_id: str):
     """
-    Pauses the countdown for a device.
-    No alert will fire while paused.
-    Sending a heartbeat will automatically un-pause it.
+    Pauses the countdown timer for a device.
+
+    - Cancels the background timer completely
+    - No alert will fire while monitor is paused
+    - Send a heartbeat to automatically resume
     """
 
     if device_id not in monitors_db:
@@ -256,24 +339,28 @@ async def pause_monitor(device_id: str):
 
     monitor = monitors_db[device_id]
 
+    # Can't pause a device that's already down
     if monitor["status"] == "down":
         raise HTTPException(
             status_code=400,
             detail=f"Monitor '{device_id}' is already down. Cannot pause."
         )
 
+    # Can't pause something already paused
     if monitor["status"] == "paused":
         raise HTTPException(
             status_code=400,
             detail=f"Monitor '{device_id}' is already paused."
         )
 
-    # Cancel the running timer so it doesn't fire while paused
+    # Cancel the running timer so it doesn't fire during maintenance
     if device_id in active_tasks:
         active_tasks[device_id].cancel()
 
-    # Update status to paused
+    # Update status
     monitors_db[device_id]["status"] = "paused"
+
+    logger.info(f"⏸️  Monitor '{device_id}' paused")
 
     return {
         "message": f"Monitor '{device_id}' paused. Send a heartbeat to resume.",
@@ -281,24 +368,62 @@ async def pause_monitor(device_id: str):
         "status": "paused"
     }
 
+# ─────────────────────────────────────────────────────────────────
+# ROUTE 5: GET /monitors/{id} — Get a single monitor's status
+# Bonus route — great for checking device health on demand
+# ─────────────────────────────────────────────────────────────────
+
+@app.get("/monitors/{device_id}")
+def get_monitor(device_id: str):
+    """
+    Returns the current state of a single monitor.
+    Useful for dashboards and real-time status checks.
+    """
+
+    if device_id not in monitors_db:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Monitor '{device_id}' not found"
+        )
+
+    return monitors_db[device_id]
+
+# ─────────────────────────────────────────────────────────────────
+# ROUTE 6: GET /monitors — List all monitors
+# Returns every registered monitor and their current status
+# ─────────────────────────────────────────────────────────────────
+
+@app.get("/monitors")
+def list_monitors():
+    """
+    Returns all registered monitors and their statuses.
+    Great for a dashboard overview of all devices.
+    """
+
+    if not monitors_db:
+        return {"monitors": [], "total": 0}
+
+    return {
+        "monitors": list(monitors_db.values()),
+        "total": len(monitors_db)
+    }
 
 # ─────────────────────────────────────────────────────────────────
 # ROUTE 7: GET /monitors/{id}/history — Heartbeat history log
-# DEVELOPER'S CHOICE feature
-# Shows every heartbeat a device ever sent
-# Critical for auditing and debugging in real infrastructure systems
+# ★ DEVELOPER'S CHOICE FEATURE ★
+# Adds observability — engineers can audit device behaviour over time
 # ─────────────────────────────────────────────────────────────────
 
 @app.get("/monitors/{device_id}/history")
 def get_monitor_history(device_id: str):
     """
-    Returns the full heartbeat history for a device.
+    Returns the full heartbeat audit log for a device.
 
     Why this matters:
-    - Tells you HOW OFTEN a device is checking in
-    - Helps identify devices that are barely alive (pinging less frequently)
+    - Shows HOW OFTEN a device is checking in
+    - Identifies devices that are barely alive (pinging less frequently)
     - Gives engineers an audit trail before and after an incident
-    - In production: would be stored in a time-series database like InfluxDB
+    - In production: stored in a time-series DB like InfluxDB or TimescaleDB
     """
 
     if device_id not in monitors_db:
@@ -314,48 +439,7 @@ def get_monitor_history(device_id: str):
         "device_id": device_id,
         "status": monitor["status"],
         "total_heartbeats": len(history),
-        # total_heartbeats tells you at a glance how active this device was
         "first_heartbeat": history[0]["received_at"] if history else None,
-        # first_heartbeat → when did this device first check in?
         "last_heartbeat": monitor["last_heartbeat"],
-        # last_heartbeat → when did it last check in?
         "history": history
-        # full log of every single ping
-    }
-# ─────────────────────────────────────────────────────────────────
-# ROUTE 5: GET /monitors/{id} — Get a single monitor's status
-# Bonus route — shows initiative, great for interview demo
-# ─────────────────────────────────────────────────────────────────
-
-@app.get("/monitors/{device_id}")
-def get_monitor(device_id: str):
-    """
-    Returns the current state of a single monitor.
-    """
-
-    if device_id not in monitors_db:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Monitor '{device_id}' not found"
-        )
-
-    return monitors_db[device_id]
-
-# ─────────────────────────────────────────────────────────────────
-# ROUTE 6: GET /monitors — List all monitors
-# Great for a dashboard overview
-# ─────────────────────────────────────────────────────────────────
-
-@app.get("/monitors")
-def list_monitors():
-    """
-    Returns all registered monitors and their statuses.
-    """
-
-    if not monitors_db:
-        return {"monitors": [], "total": 0}
-
-    return {
-        "monitors": list(monitors_db.values()),
-        "total": len(monitors_db)
     }

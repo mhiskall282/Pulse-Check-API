@@ -1,4 +1,4 @@
-# 🚨 Pulse Check API
+#  Pulse Check API
 ### Dead Man's Switch — Device Heartbeat Monitoring System
 
 > *"Silence is not golden when it comes from a remote solar farm in the middle of nowhere."*
@@ -9,7 +9,7 @@ Built for **CritMon Servers Inc.** — a critical infrastructure monitoring comp
 
 ---
 
-## 🌐 Live Deployment
+## Live Deployment
 
 | Resource | URL |
 |----------|-----|
@@ -18,11 +18,11 @@ Built for **CritMon Servers Inc.** — a critical infrastructure monitoring comp
 | **Alternative Docs (ReDoc)** | `https://pulse-check-api-9fa8.onrender.com/redoc` |
 | **Health Check** | `https://pulse-check-api-9fa8.onrender.com/` |
 
-> ⚠️ Hosted on Render's free tier — the server may take ~30 seconds to wake up on first request.
+> Hosted on Render's free tier — the server may take ~30 seconds to wake up on first request.
 
 ---
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [The Problem](#-the-problem)
 - [How It Works](#-how-it-works)
@@ -37,7 +37,7 @@ Built for **CritMon Servers Inc.** — a critical infrastructure monitoring comp
 
 ---
 
-## 🔍 The Problem
+## The Problem
 
 CritMon manages hundreds of remote devices — solar farm controllers, weather stations, and sensors — deployed in areas with poor connectivity. These devices are supposed to send **"I'm alive"** signals every hour.
 
@@ -47,7 +47,7 @@ CritMon manages hundreds of remote devices — solar farm controllers, weather s
 
 ---
 
-## ⚙️ How It Works
+##  How It Works
 
 ```
 Device registers → Timer starts → Device keeps pinging → Timer resets
@@ -69,7 +69,7 @@ This pattern is known as a **Dead Man's Switch** — a fail-safe mechanism that 
 
 ---
 
-## 🏗️ Architecture Diagrams
+## Architecture Diagrams
 
 ### State Diagram — Monitor Lifecycle
 
@@ -155,7 +155,7 @@ graph TD
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 The project follows a **modular architecture** based on the **Separation of Concerns** principle. Each file has one clear, single responsibility.
 
@@ -192,7 +192,7 @@ This means the codebase is **open for extension, closed for modification** — a
 
 ---
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 | Tool | Purpose |
 |------|---------|
@@ -214,7 +214,7 @@ This means the codebase is **open for extension, closed for modification** — a
 
 ---
 
-## 🚀 Setup Instructions
+## Setup Instructions
 
 ### Prerequisites
 
@@ -273,12 +273,12 @@ curl http://localhost:8000/monitors/device-123
 curl http://localhost:8000/monitors/device-123/history
 
 # Wait 30 seconds without sending a heartbeat
-# Watch the 🚨 alert fire in your terminal automatically
+# Watch the  alert fire in your terminal automatically
 ```
 
 ---
 
-## 📡 API Documentation
+## API Documentation
 
 ### Base URL
 ```
@@ -467,7 +467,7 @@ When a timer expires the following is logged to the console:
 
 ---
 
-## ⭐ Developer's Choice Feature
+## Developer's Choice Feature
 
 ### Heartbeat History Log — `GET /monitors/{id}/history`
 
@@ -494,7 +494,7 @@ Real monitoring tools — **AWS CloudWatch**, **Datadog**, **Grafana**, **PagerD
 
 ---
 
-## 🧠 Engineering Decisions
+## Engineering Decisions
 
 ### Why asyncio instead of threading?
 
@@ -519,7 +519,7 @@ When a heartbeat cancels a timer, Python raises `asyncio.CancelledError` inside 
 
 ---
 
-## 🔮 Production Roadmap
+## Production Roadmap
 
 | Priority | Feature | Implementation |
 |----------|---------|----------------|

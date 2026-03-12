@@ -22,6 +22,7 @@
 import asyncio
 import logging
 from datetime import datetime
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 # APIRouter → groups related endpoints together
@@ -149,6 +150,10 @@ async def heartbeat(device_id: str):
             status_code=400,
             detail=f"Monitor '{device_id}' is already down. Create a new monitor to restart tracking."
         )
+
+    # Update timeout if provided
+    if new_timeout and new_timeout > 0:
+        monitors_db[device_id]["timeout"] = new_timeout
 
     # Per the spec: "Calling the heartbeat endpoint again automatically
     # un-pauses the monitor and restarts the timer"

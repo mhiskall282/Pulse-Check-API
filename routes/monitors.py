@@ -326,3 +326,20 @@ def get_monitor_history(device_id: str):
         "last_heartbeat": monitor["last_heartbeat"],
         "history": history
     }
+
+
+# @router.delete("/{device_id}")
+# async def delete_monitor(device_id: str):
+#     # Check it exists
+#     if device_id not in monitors_db:
+#         raise HTTPException(status_code=404, detail=f"Monitor '{device_id}' not found")
+    
+#     # Cancel the running timer if active
+#     if device_id in active_tasks:
+#         active_tasks[device_id].cancel()
+#         del active_tasks[device_id]
+    
+#     # Remove from database
+#     del monitors_db[device_id]
+    
+#     return {"message": f"Monitor '{device_id}' deleted successfully"}
